@@ -6,19 +6,9 @@
 ```sh
 gleam add vm_translator@1
 ```
-```gleam
-import vm_translator
-
-pub fn main() {
-  // TODO: An example of the project in use
-}
-```
-
-Further documentation can be found at <https://hexdocs.pm/vm_translator>.
 
 ## Development
 
 ```sh
-gleam run   # Run the project
-gleam test  # Run the tests
+gleam run -m vm_translator FILE_PATH  # Run the project
 ```
