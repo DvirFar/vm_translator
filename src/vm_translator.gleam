@@ -1,3 +1,5 @@
+// author: Dvir Farkash 329398911 150060.3.5785.42
+
 import argv
 import gleam/dict
 import gleam/int
@@ -27,12 +29,26 @@ pub type Jump {
   Lt
 }
 
+pub type GotoI {
+  Goto(label: String)
+  IfGoto(label: String)
+}
+
+pub type Func {
+  Function(name: String, args_num: Int)
+  Return
+  Call(name: String, args_num: Int)
+}
+
 // Define a type for all possible instructions
 pub type Instruction {
   Comp(Comp)
   Jump(Jump)
   Push(segment: String, index: Int)
   Pop(segment: String, index: Int)
+  Label(name: String)
+  GotoI(GotoI)
+  Func(Func)
   None
 }
 
@@ -56,6 +72,12 @@ pub fn process_line(line) -> Instruction {
     [inst] if inst == "lt" -> Jump(Lt)
     ["push", segment, index] -> Push(segment:, index: parse_int(index))
     ["pop", segment, index] -> Pop(segment:, index: parse_int(index))
+    ["label", c] -> Label(name: c)
+    ["goto", c] -> GotoI(Goto(label: c))
+    ["if-goto", c] -> GotoI(IfGoto(label: c))
+    ["call", g, n] -> Func(Call(name: g, args_num: parse_int(n)))
+    [inst] if inst == "return" -> Func(Return)
+    ["function", g, n] -> Func(Function(name: g, args_num: parse_int(n)))
     [""] -> None
     _ -> panic as "bad instruction"
   }
@@ -68,6 +90,9 @@ pub fn process_instruction(info: Info, instruction: Instruction) -> Info {
     Jump(inst) -> handle_jump(info, inst)
     Push(segment, index) -> handle_push(info, segment, index)
     Pop(segment, index) -> handle_pop(info, segment, index)
+    Label(inst) -> handle_label(info, inst)
+    GotoI(inst) -> handle_gotoi(info, inst)
+    Func(inst) -> handle_func(info, inst)
     None -> info
   }
 }
@@ -350,6 +375,168 @@ pub fn handle_pop4(info: Info, index: Int) {
       )
     _ -> panic as "Error in pop pointer index"
   }
+}
+
+pub fn handle_label(info: Info, name: String) {
+  let _ =
+    simplifile.append(
+      info.output_file,
+      "(" <> info.class_name <> "." <> name <> ")\n",
+    )
+  info
+}
+
+pub fn handle_gotoi(info: Info, inst: GotoI) {
+  let _ = case inst {
+    Goto(label) -> handle_goto(info, label)
+    IfGoto(label) -> handle_ifgoto(info, label)
+  }
+  info
+}
+
+pub fn handle_goto(info: Info, label: String) {
+  let _ =
+    simplifile.append(
+      info.output_file,
+      "@" <> info.class_name <> "." <> label <> "\n0;JMP\n",
+    )
+  info
+}
+
+pub fn handle_ifgoto(info: Info, label: String) {
+  let _ =
+    simplifile.append(
+      info.output_file,
+      "@SP\nM=M-1\nA=M\nD=M\n@"
+        <> info.class_name
+        <> "."
+        <> label
+        <> "\nD;JNE\n",
+    )
+  info
+}
+
+pub fn handle_func(info: Info, inst: Func) {
+  let _ = case inst {
+    Function(name, args_num) -> handle_function(info, name, args_num)
+    Return -> handle_return(info)
+    Call(name, args_num) -> handle_call(info, name, args_num)
+  }
+  info
+}
+
+pub fn handle_function(info: Info, name: String, args_num: Int) {
+  let func_label = info.class_name <> "." <> name <> "."
+  let _ =
+    simplifile.append(
+      info.output_file,
+      "("
+        <> info.class_name
+        <> "."
+        <> name
+        <> ")\n"
+        <> "@"
+        <> int.to_string(args_num)
+        <> "\nD=A\n@"
+        <> func_label
+        <> "InitEnd\nD;JEQ\n("
+        <> func_label
+        <> "InitLoop)\n@SP\nA=M\nM=0\n@SP\nM=M+1\n@"
+        <> func_label
+        <> "InitLoop\nD=D-1;JNE\n("
+        <> func_label
+        <> "InitEnd)\n",
+    )
+  info
+}
+
+pub fn handle_return(info: Info) {
+  // save return address in head of stack
+  let _ =
+    simplifile.append(info.output_file, "@LCL\nD=M\n@5\nA=D-A\nD=M\n@13\nM=D\n")
+
+  // save return value in memory - RAM[13]
+  let _ =
+    simplifile.append(
+      info.output_file,
+      "@SP\nM=M-1\nA=M\nD=M\n@ARG\nA=M\nM=D\n",
+    )
+
+  // restore SP
+  let _ = simplifile.append(info.output_file, "@ARG\nD=M\n@SP\nM=D+1\n")
+
+  // restore pointers
+  pop_vals(info, "THAT")
+  pop_vals(info, "THIS")
+  pop_vals(info, "ARG")
+  pop_vals(info, "LCL")
+
+  // goto return address
+  let _ = simplifile.append(info.output_file, "@13\nA=M\n0;JMP\n")
+
+  info
+}
+
+fn pop_vals(info: Info, val: String) {
+  let _ =
+    simplifile.append(
+      info.output_file,
+      "@LCL\nM=M-1\nA=M\nD=M\n@" <> val <> "\nM=D\n",
+    )
+  info
+}
+
+pub const append_push_vals_end = "@SP\nA=M\nM=D\n@SP\nM=M+1\n"
+
+pub fn handle_call(info: Info, name: String, args_num: Int) {
+  // push return address
+  let _ =
+    simplifile.append(
+      info.output_file,
+      "@"
+        <> info.class_name
+        <> "."
+        <> int.to_string(info.labels)
+        <> "ReturnAddress\nD=A\n"
+        <> append_push_vals_end,
+    )
+
+  // push pointers
+  let _ = push_vals(info, "LCL")
+  let _ = push_vals(info, "ARG")
+  let _ = push_vals(info, "THIS")
+  let _ = push_vals(info, "THAT")
+
+  // calc new ARG
+  let _ =
+    simplifile.append(
+      info.output_file,
+      "@SP\nD=M\n@" <> int.to_string(args_num - 5) <> "D=D-A\n@ARG\nM=D\n",
+    )
+
+  // calc new LCL
+  let _ = simplifile.append(info.output_file, "@SP\nD=M\n@LCL\nM=D\n")
+
+  // give control to func
+  let _ =
+    simplifile.append(
+      info.output_file,
+      "@" <> info.class_name <> "." <> name <> "\n0;JMP\n",
+    )
+
+  // define return address
+  let _ = handle_label(info, info.class_name <> "." <> name)
+
+  Info(..info, labels: info.labels + 1)
+}
+
+fn push_vals(info: Info, val: String) {
+  let _ =
+    simplifile.append(
+      info.output_file,
+      "@" <> val <> "D=M\n" <> append_push_vals_end,
+    )
+  info
 }
 
 // Main function to process the input file and generate the output
