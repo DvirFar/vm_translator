@@ -60,7 +60,8 @@ pub fn parse_int(str: String) {
 
 // Process a single line of input and convert it into an Instruction
 pub fn process_line(line) -> Instruction {
-  case string.split(string.drop_end(line, 1), " ") {
+  echo line
+  case string.split(string.trim(line), " ") {
     [inst] if inst == "add" -> Comp(Add)
     [inst] if inst == "sub" -> Comp(Sub)
     [inst] if inst == "neg" -> Comp(Neg)
@@ -417,22 +418,19 @@ pub fn handle_ifgoto(info: Info, label: String) {
 }
 
 pub fn handle_func(info: Info, inst: Func) {
-  let _ = case inst {
+  case inst {
     Function(name, args_num) -> handle_function(info, name, args_num)
     Return -> handle_return(info)
     Call(name, args_num) -> handle_call(info, name, args_num)
   }
-  info
 }
 
 pub fn handle_function(info: Info, name: String, args_num: Int) {
-  let func_label = info.class_name <> "." <> name <> "."
+  let func_label = name <> "."
   let _ =
     simplifile.append(
       info.output_file,
       "("
-        <> info.class_name
-        <> "."
         <> name
         <> ")\n"
         <> "@"
@@ -511,22 +509,19 @@ pub fn handle_call(info: Info, name: String, args_num: Int) {
   let _ =
     simplifile.append(
       info.output_file,
-      "@SP\nD=M\n@" <> int.to_string(args_num - 5) <> "D=D-A\n@ARG\nM=D\n",
+      "@SP\nD=M\n@" <> int.to_string(args_num + 5) <> "\nD=D-A\n@ARG\nM=D\n",
     )
 
   // calc new LCL
   let _ = simplifile.append(info.output_file, "@SP\nD=M\n@LCL\nM=D\n")
 
   // give control to func
-  let _ =
-    simplifile.append(
-      info.output_file,
-      "@" <> info.class_name <> "." <> name <> "\n0;JMP\n",
-    )
+  let _ = simplifile.append(info.output_file, "@" <> name <> "\n0;JMP\n")
 
   // define return address
-  let _ = handle_label(info, info.class_name <> "." <> name)
+  let _ = handle_label(info, int.to_string(info.labels) <> "ReturnAddress")
 
+  echo info.labels
   Info(..info, labels: info.labels + 1)
 }
 
@@ -534,55 +529,52 @@ fn push_vals(info: Info, val: String) {
   let _ =
     simplifile.append(
       info.output_file,
-      "@" <> val <> "D=M\n" <> append_push_vals_end,
+      "@" <> val <> "\nD=M\n" <> append_push_vals_end,
     )
   info
 }
 
 // Main function to process the input file and generate the output
 pub fn main() {
-  let assert Ok(file_name) = list.first(argv.load().arguments)
-  let assert Ok(temp_file) = list.first(string.split(file_name, "."))
-  let assert Ok(class_name) = list.last(string.split(temp_file, "\\"))
-  let output_file = temp_file <> ".asm"
+  let assert Ok(dir_name) = list.first(argv.load().arguments)
+  let assert Ok(files) = simplifile.get_files(dir_name)
+  echo files
+
+  let vm_files = list.filter(files, fn(file) { string.ends_with(file, ".vm") })
+  let sorted_vm_files = case
+    list.find(vm_files, fn(file) { string.ends_with(file, "Sys.vm") })
+  {
+    Ok(sys_file) -> [
+      sys_file,
+      ..list.filter(vm_files, fn(file) { file != sys_file })
+    ]
+    Error(Nil) -> vm_files
+  }
+
+  let output_file = dir_name <> "/output.asm"
+  let assert Ok(class_name) = list.last(string.split(dir_name, "\\"))
   // Ensure the output file is empty
   let _ = simplifile.delete(output_file)
-  let assert Ok(data) = simplifile.read(file_name)
-  string.split(data, "\n")
-  |> list.map(process_line)
-  |> list.fold(Info(0, output_file, class_name), process_instruction)
+  let initial_info = Info(0, output_file, class_name)
+
+  // Add sys.init() call if there is more than one file
+  let info_with_init = case list.length(sorted_vm_files) > 1 {
+    True -> {
+      let _ = simplifile.append(output_file, "@256\nD=A\n@SP\nM=D\n")
+      let _ = handle_call(initial_info, "Sys.init", 0)
+      Info(..initial_info, labels: initial_info.labels + 1)
+    }
+    False -> {
+      initial_info
+    }
+  }
+
+  list.fold(sorted_vm_files, info_with_init, fn(info, file) {
+    let assert Ok(temp_file) = list.first(string.split(file, "."))
+    let assert Ok(class_name) = list.last(string.split(temp_file, "/"))
+    let assert Ok(data) = simplifile.read(file)
+    string.split(data, "\n")
+    |> list.map(process_line)
+    |> list.fold(Info(..info, class_name: class_name), process_instruction)
+  })
 }
-/// add = ["@sp", "A=M-1", "D=M", "A=A-1", "M=D+M", "@sp", "M=M-1"]
-/// sub = ["@sp", "A=M-1", "D=M", "A=A-1", "M=M-D", "@sp", "M=M-1"]
-/// neg = ["@sp", "A=M-1", "M=-M"]
-/// and = ["@sp", "A=M-1", "D=M", "A=A-1", "M=D&M", "@sp", "M=M-1"]
-/// or = ["@sp", "A=M-1", "D=M", "A=A-1", "M=D|M", "@sp", "M=M-1"]
-/// not = ["@sp", "A=M-1", "M=!M"]
-/// eq = ["@sp", "A=M-1", "D=M", "A=A-1", "D=M-D", "@TRUE0", "D;JEQ", "D=0", "@sp", "A=M-1", "A=A-1", "M=D", 
-///                   "@FALSE0", "0;JMP", "(TRUE0)", "D=-1", "@sp", "A=M-1", "A=A-1", "M=D", "(FALSE0)", "@sp", "M=M-1"]
-/// gt = ["@sp", "A=M-1", "D=M", "A=A-1", "D=M-D", "@TRUE0", "D;JGT", "D=0", "@sp", "A=M-1", "A=A-1", "M=D", 
-///                   "@FALSE0", "0;JMP", "(TRUE0)", "D=-1", "@sp", "A=M-1", "A=A-1", "M=D", "(FALSE0)", "@sp", "M=M-1"]
-/// lt = ["@sp", "A=M-1", "D=M", "A=A-1", "D=M-D", "@TRUE0", "D;JLT", "D=0", "@sp", "A=M-1", "A=A-1", "M=D", 
-///                   "@FALSE0", "0;JMP", "(TRUE0)", "D=-1", "@sp", "A=M-1", "A=A-1", "M=D", "(FALSE0)", "@sp", "M=M-1"]
-/// 
-/// push constant x = ["@x", "D=A", "@sp", "A=M", "M=D", "@sp", "M=M+1"]
-/// 
-/// push local x = ["@x", "D=A", "@LCL", "A=D+M", "D=M", "@sp", "A=M", "M=D", "@sp", "M=M+1"]
-/// pop local x = ["@sp", "A=M-1", "D=M", "@LCL", "A=M", "A=A+1"*x, "M=D", "@sp", "M=M-1"]
-/// push argument x = ["@x", "D=A", "@ARG", "A=D+M", "D=M", "@sp", "A=M", "M=D", "@sp", "M=M+1"]
-/// pop argument x = ["@sp", "A=M-1", "D=M", "@ARG", "A=M", "A=A+1"*x, "M=D", "@sp", "M=M-1"]
-/// push this x = ["@x", "D=A", "@THIS", "A=D+M", "D=M", "@sp", "A=M", "M=D", "@sp", "M=M+1"]
-/// pop this x = ["@sp", "A=M-1", "D=M", "@THIS", "A=M", "A=A+1"*x, "M=D", "@sp", "M=M-1"]
-/// push that x = ["@x", "D=A", "@THAT", "A=D+M", "D=M", "@sp", "A=M", "M=D", "@sp", "M=M+1"]
-/// pop that x = ["@sp", "A=M-1", "D=M", "@THAT", "A=M", "A=A+1"*x, "M=D", "@sp", "M=M-1"]
-/// 
-/// push temp x = ["@(5+x)", "D=M", "@sp", "A=M", "M=D", "@sp", "M=M+1"]
-/// pop temp x = ["@sp", "A=M-1", "D=M", "@(5+x)", "M=D", "@sp", "M=M-1"]
-/// 
-/// push pointer 0 = ["@THIS", "D=M", "@sp", "A=M", "M=D", "@sp", "M=M+1"]
-/// pop pointer 0 = ["@sp", "A=M-1", "D=M", "@THIS", "M=D", "@sp", "M=M-1"]
-/// push pointer 1 = ["@THAT", "D=M", "@sp", "A=M", "M=D", "@sp", "M=M+1"]
-/// pop pointer 1 = ["@sp", "A=M-1", "D=M", "@THAT", "M=D", "@sp", "M=M-1"]
-/// 
-/// push static x = ["@(name).x", "D=M", "@sp", "A=M", "M=D", "@sp", "M=M+1"]
-/// pop static x = ["@sp", "A=M-1", "D=M", "@(name).x", "M=D", "@sp", "M=M-1"]
