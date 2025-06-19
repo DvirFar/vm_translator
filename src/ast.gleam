@@ -1,6 +1,7 @@
 // ========================================
 // Imports
 // ========================================
+import gleam/list
 import gleam/option.{type Option}
 import tokens.{
   type Identifier, type IntegerConstant, type StringConstant, type Symbol,
@@ -256,4 +257,21 @@ pub type VarNameExpr {
 /// A unary operation applied to a term.
 pub type UnaryOpTerm {
   UOpTerm(op: UnaryOp, term: Term)
+}
+
+/// Looks up the return type of a subroutine by name in a class AST.
+pub fn lookup_subroutine_return_type(
+  class_: Class,
+  subroutine_name: SubroutineName,
+) -> Result(RetType, Nil) {
+  let Class(_, _, subroutines) = class_
+  list.find_map(subroutines, fn(sub) {
+    case sub {
+      ClassSubroutineDec(_, ret_type, name, _, _) ->
+        case name {
+          name if name == subroutine_name -> Ok(ret_type)
+          _ -> Error(Nil)
+        }
+    }
+  })
 }

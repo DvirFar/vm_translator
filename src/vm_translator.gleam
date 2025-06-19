@@ -536,7 +536,6 @@ fn push_vals(info: Info, val: String) {
 pub fn main() {
   let assert Ok(dir_name) = list.first(argv.load().arguments)
   let assert Ok(files) = simplifile.get_files(dir_name)
-  echo files
 
   let vm_files = list.filter(files, fn(file) { string.ends_with(file, ".vm") })
   let sorted_vm_files = case

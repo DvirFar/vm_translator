@@ -1,11 +1,9 @@
 // author: Dvir Farkash 329398911 150060.3.5785.42
 
-import argv
 import ast
 import gleam/int
 import gleam/list
 import gleam/option.{Some}
-import gleam/result
 import gleam/set
 import gleam/string
 import nibble
@@ -967,31 +965,4 @@ fn expression_list_to_xml(exprs, output_file: String, level: Int) {
     }
   }
   let _ = simplifile.append(output_file, indent(level) <> "</expressionList>\n")
-}
-
-// Main function to process the input file and generate the output
-pub fn main() {
-  let assert Ok(dir_name) = list.first(argv.load().arguments)
-  let assert Ok(files) = simplifile.get_files(dir_name)
-
-  let jack_files =
-    list.filter(files, fn(file) { string.ends_with(file, ".jack") })
-
-  list.each(jack_files, fn(file) {
-    let assert Ok(data) = simplifile.read(file)
-
-    use tokens <- result.try(
-      new()
-      |> run(data)
-      |> result.map_error(fn(e) {
-        NoMatchingTokenError(row: e.row, col: e.col, lexeme: e.lexeme)
-      }),
-    )
-
-    let assert Ok(output_file) = list.first(string.split(file, "."))
-    let _ = to_xml_t(tokens, output_file <> "TTest.xml")
-    let _ = to_xml(output_file <> "TTest.xml", output_file <> "Test.xml")
-
-    Ok("")
-  })
 }
